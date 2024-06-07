@@ -16,6 +16,7 @@ class ThresholdFinder:
 
         print(f'Bucket: {bucket_info}')
         print(f'freqs: {left_freqs} <<>> {right_freqs}')
+        
         k1 = len([count for count in left_freqs if count != 0])     # number of non-zero frequencies in left_freqs
         s1 = sum(left_freqs) if k1 > 0 else 0                       # sum of frequencies in left_freqs
         hs1 = DiscretizationUtils.entropy(left_freqs, s1)           # entropy of left_freqs

@@ -1,6 +1,6 @@
 from typing import List, Tuple
 from pyspark import RDD
-from math import ceil
+from math import ceil, isnan
 
 class InitialThresholdsFinder:
     def __init__(self):
@@ -19,10 +19,9 @@ class InitialThresholdsFinder:
         """
         If one of the unique values is NaN, use the other one, otherwise take the midpoint.
         """
-
-        if x1 != x1:
+        if isnan(x1):
             return x2
-        elif x2 != x2:
+        elif isnan(x2):
             return x1
         else:
             return (x1 + x2) / 2.0
@@ -58,7 +57,7 @@ class InitialThresholdsFinder:
             if it:
                 (last_feature_idx, last_x, _), last_freqs = next(it)
                 result = []
-                accum_freqs = [0] * n_labels
+                accum_freqs = last_freqs
                 
                 for (f_idx, x, _), freqs in it:
                     if self.is_boundary(freqs, last_freqs):
@@ -78,7 +77,8 @@ class InitialThresholdsFinder:
 
         return partitioned_points.mapPartitionsWithIndex(map_partitions_with_index)
     
-    def find_fast_initial_thresholds(self, sorted_values: RDD, n_labels: int, max_by_part: int):
+    def find_fast_initial_thresholds(self, sorted_values: RDD[Tuple[Tuple[int, float], 
+                                        List[int]]], n_labels: int, max_by_part: int) -> RDD[Tuple[Tuple[int, float], List[int]]]:
         """
         * Computes the initial candidate cut points by feature. This is a non-deterministic, but and faster version.
         * This version may generate some non-boundary points when processing limits in partitions.

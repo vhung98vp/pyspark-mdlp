@@ -1,8 +1,10 @@
 import time
 from pyspark.sql import SparkSession
+from pyspark.sql.functions import col
 from pyspark.ml.linalg import DenseVector, SparseVector
-from pyspark import StorageLevel
-import logging
+from pyspark import StorageLevel, RDD, SparkContext
+from typing import List, Tuple, Dict
+from math import isnan
 from .InitialThresholdsFinder import InitialThresholdsFinder
 from .ManyValuesThresholdFinder import ManyValuesThresholdFinder
 from .FewValuesThresholdFinder import FewValuesThresholdFinder
@@ -54,7 +56,7 @@ class MDLPDiscretizer:
         self.labels2int = self.data.select('label').distinct().rdd.map(lambda x: x[0]).zipWithIndex().collectAsMap()
         self.n_labels = len(self.labels2int)
 
-    def process_continuous_attributes(self, cont_indices, n_features):
+    def process_continuous_attributes(self, cont_indices: List[int], n_features: int):
         """
         * Get information about the attributes before performing discretization.
         * @param cont_indices Indexes to discretize (if not specified, they are calculated).
@@ -94,7 +96,7 @@ class MDLPDiscretizer:
         print("Done sortByKey in", time.time() - start)
         return result
     
-    def initial_thresholds(self, points, n_features):
+    def initial_thresholds(self, points: RDD[Tuple[Tuple[int, float], List[int]]], n_features: int):
         """
         * Computes the initial candidate points by feature.
         * @param points RDD with distinct points by feature ((feature, point), class values).
@@ -107,7 +109,7 @@ class MDLPDiscretizer:
         else:
             return finder.find_initial_thresholds(points, n_features, self.n_labels, self.max_by_part)   
 
-    def find_all_thresholds(self, initial_candidates, sc, max_bins):
+    def find_all_thresholds(self, initial_candidates, sc: SparkContext, max_bins: int):
         """
         * Divide RDD into two categories according to the number of points by feature.
         * @return find threshold for both sorts of attributes - those with many values, and those with few.
@@ -125,21 +127,23 @@ class MDLPDiscretizer:
 
         return all_thresholds
 
-    def find_big_thresholds(self, initial_candidates, max_bins, min_bin_weight, big_indexes):
+    def find_big_thresholds(self, initial_candidates: RDD[Tuple[int, Tuple[float, List[int]]]], 
+                                max_bins: int, min_bin_weight: int, big_indexes: Dict[int, int]):
         """
         * Features with too many unique points must be processed iteratively (rare condition)
         * @return the splits for features with more values than will fit in a partition.
         """
-        print(f"Find big thresholds, max size per partition {len(big_indexes)}")
+        print(f"Find big thresholds")
         big_thresholds = {}
         big_thresholds_finder = ManyValuesThresholdFinder(self.n_labels, self.stopping_criterion,
                                                           max_bins, min_bin_weight, self.max_by_part)
-        for k in big_indexes:
-            cands = initial_candidates.filter(lambda x: x[0] == k).values().sortByKey()
+        for key in big_indexes:
+            cands = initial_candidates.filter(lambda x: x[0] == key).values().sortByKey()
             big_thresholds[k] = big_thresholds_finder.find_thresholds(cands)
         return big_thresholds
 
-    def find_small_thresholds(self, initial_candidates, max_bins, min_bin_weight, b_big_indexes):
+    def find_small_thresholds(self, initial_candidates: RDD[Tuple[int, Tuple[float, List[int]]]], 
+                                max_bins: int, min_bin_weight: int, b_big_indexes):
         """
         * The features with a small number of points can be processed in a parallel way
         * @return the splits for features with few values
@@ -153,7 +157,7 @@ class MDLPDiscretizer:
             .mapValues(list) \
             .mapValues(lambda x: small_thresholds_finder.find_thresholds(sorted(x, key=lambda x: x[0])))
 
-    def build_model_from_thresholds(self, n_features, continuous_vars, all_thresholds):
+    def build_model_from_thresholds(self, n_features: int, continuous_vars: List[int], all_thresholds: List[Tuple[int, List[float]]]):
         """
         * @return the discretizer model that can be used to bin data
         """
@@ -179,9 +183,10 @@ class MDLPDiscretizer:
         start0 = time.time()
 
         if self.data.storageLevel == StorageLevel.NONE:
-            print("The input data is not directly cached, which may hurt performance if its parent RDDs are also uncached.")
+            self.data.persist(StorageLevel.MEMORY_ONLY)
+            print("The input data is now cached in memory.")
 
-        if self.data.filter(self.data["label"].isNull()).count() > 0:
+        if self.data.filter(col("label").isNull()).count() > 0:
             raise ValueError("Some NaN values have been found in the label Column. This problem must be fixed before continuing with discretization.")
 
         self.data.rdd.cache()
@@ -197,7 +202,7 @@ class MDLPDiscretizer:
         n_features = len(self.data.first().features)
 
         continuous_vars = self.process_continuous_attributes(cont_feat, n_features)
-        print(f"Number of labels: {self.n_labels}")
+        print("Number of labels:", self.n_labels)
         print("Number of continuous attributes:", len(continuous_vars))
         print("Total number of attributes:", n_features)
 
@@ -228,8 +233,8 @@ class MDLPDiscretizer:
         start1 = time.time()
         initial_candidates = (self.initial_thresholds(sorted_values, n_features) 
             .map(lambda x: (x[0][0], (x[0][1], x[1]))) 
-            .filter(lambda x: b_arr.value[x[0]]) )
-            #.cache())
+            .filter(lambda x: b_arr.value[x[0]])
+            .cache())
         print("Done finding initial thresholds in", time.time() - start1)
 
         start2 = time.time()

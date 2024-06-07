@@ -5,7 +5,7 @@ from pyspark.ml.feature import VectorAssembler
 from mdlp.MDLPDiscretizer import MDLPDiscretizer
 
 
-def MDLPBuilder(app_name, csv_path, label_col, max_by_part=100000, min_bin_percentage=0.0001):
+def MDLPBuilder(app_name, csv_path, label_col):
     """
     Build MDLP Discretizer from CSV file
     * @param app_name Spark session
@@ -50,7 +50,7 @@ def MDLPBuilder(app_name, csv_path, label_col, max_by_part=100000, min_bin_perce
     df.show(20)
 
     # MDLP Discretizer
-    discretizer = MDLPDiscretizer(df, max_by_part, min_bin_percentage)
+    discretizer = MDLPDiscretizer(df)
     discretizer_model = discretizer.train()
 
     # Define a UDF to apply the transformation
