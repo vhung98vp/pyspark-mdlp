@@ -38,7 +38,7 @@ class MDLPDiscretizer:
                  max_by_part=DEFAULT_MAX_BY_PART, min_bin_percentage=DEFAULT_MIN_BIN_PERCENTAGE,
                  approximate=True):
         """      
-        * @param data RDD of LabeledPoint
+        * @param data Dataset of LabeledPoint
         * @param stopping_criterion (optional) used to determine when to stop recursive splitting
         * @param max_by_part (optional) used to determine maximum number of elements in a partition
         * @param min_bin_percentage (optional) minimum percent of total dataset allowed in a single bin.
@@ -77,17 +77,22 @@ class MDLPDiscretizer:
         """
 
         non_zeros = (feature_values
-            .map(lambda y: ((y[0][0], y[0][1]), y[1]))
-            .reduceByKey(lambda x, y: [a + b for a, b in zip(x, y)]))
+            .map(lambda x: (f"{x[0][0]},{x[0][1]}", x[1]))
+            .reduceByKey(lambda x, y: [a + b for a, b in zip(x, y)])
+            .map(lambda x: ((int(x[0].split(",")[0]), float(x[0].split(",")[1])), x[1])))
         
         zeros = (non_zeros
             .map(lambda x: (x[0][0], x[1])) 
-            .reduceByKey(lambda x, y: [a + b for a, b in zip(x, y)]) 
-            .map(lambda x: ((x[0], 0.0), [b_class_distrib.value.get(i, 0) - v for i, v in enumerate(x[1])])) 
+            .reduceByKey(lambda x, y: [a + b for a, b in zip(x, y)])
+            .map(lambda x: ((x[0], 0.0), [b_class_distrib.value[i] - x[1][i] for i in range(len(x[1]))])) 
             #.map(lambda x: ((x[0], 0.0), x[1])) instead
             .filter(lambda x: sum(x[1]) > 0) )
+        
         distinct_values = non_zeros.union(zeros)
-        return distinct_values.sortByKey()
+        start = time.time()
+        result = distinct_values.sortByKey()
+        print("Done sortByKey in", time.time() - start)
+        return result
     
     def initial_thresholds(self, points, n_features):
         """
@@ -107,40 +112,46 @@ class MDLPDiscretizer:
         * Divide RDD into two categories according to the number of points by feature.
         * @return find threshold for both sorts of attributes - those with many values, and those with few.
         """
-        big_indexes = initial_candidates.countByKey()
-        big_thresholds = self.find_big_thresholds(initial_candidates, big_indexes)
+        big_indexes = {k: v for k, v in initial_candidates.countByKey().items() if v > self.max_by_part}
+        print(f"Big indexes: {big_indexes}")
+        b_big_indexes = sc.broadcast(big_indexes)
+        min_bin_weight = int(self.min_bin_percentage * self.data.count() / 100.0)
 
-        small_thresholds = initial_candidates \
-            .filter(lambda x: x[0] not in big_indexes) \
-            .groupByKey() \
-            .mapValues(list) \
-            .mapValues(lambda x: self.find_small_thresholds(x, max_bins))
+        big_thresholds = self.find_big_thresholds(initial_candidates, max_bins, min_bin_weight, big_indexes)
+        small_thresholds = self.find_small_thresholds(initial_candidates, max_bins, min_bin_weight, b_big_indexes)
 
-        all_thresholds = small_thresholds.union(sc.parallelize(big_thresholds.items())).collect()
+        big_thresholds_rdd = sc.parallelize(big_thresholds.items())
+        all_thresholds = small_thresholds.union(big_thresholds_rdd).collect()
 
         return all_thresholds
 
-    def find_big_thresholds(self, initial_candidates, big_indexes):
+    def find_big_thresholds(self, initial_candidates, max_bins, min_bin_weight, big_indexes):
         """
         * Features with too many unique points must be processed iteratively (rare condition)
         * @return the splits for features with more values than will fit in a partition.
         """
+        print(f"Find big thresholds, max size per partition {len(big_indexes)}")
         big_thresholds = {}
         big_thresholds_finder = ManyValuesThresholdFinder(self.n_labels, self.stopping_criterion,
-                                                          self.max_by_part, self.min_bin_percentage, self.max_by_part)
+                                                          max_bins, min_bin_weight, self.max_by_part)
         for k in big_indexes:
             cands = initial_candidates.filter(lambda x: x[0] == k).values().sortByKey()
             big_thresholds[k] = big_thresholds_finder.find_thresholds(cands)
         return big_thresholds
 
-    def find_small_thresholds(self, points, max_bins):
+    def find_small_thresholds(self, initial_candidates, max_bins, min_bin_weight, b_big_indexes):
         """
         * The features with a small number of points can be processed in a parallel way
         * @return the splits for features with few values
         """
-        small_thresholds_finder = FewValuesThresholdFinder(self.n_labels, self.stopping_criterion, max_bins,
-                                                            self.min_bin_percentage)
-        return small_thresholds_finder.find_thresholds(sorted(points, key=lambda x: x[0]))
+        print("Find small thresholds")
+        small_thresholds_finder = FewValuesThresholdFinder(self.n_labels, self.stopping_criterion, 
+                                                           max_bins, min_bin_weight)
+        return initial_candidates \
+            .filter(lambda x: x[0] not in b_big_indexes.value) \
+            .groupByKey() \
+            .mapValues(list) \
+            .mapValues(lambda x: small_thresholds_finder.find_thresholds(sorted(x, key=lambda x: x[0])))
 
     def build_model_from_thresholds(self, n_features, continuous_vars, all_thresholds):
         """
@@ -151,8 +162,10 @@ class MDLPDiscretizer:
             thresholds[idx] = [float('-inf'), float('inf')]
         for k, vth in all_thresholds:
             thresholds[k] = vth
-        logging.info("Number of features with thresholds computed: {}".format(len(all_thresholds)))
-        logging.debug("thresholds = {}".format(";\n".join([", ".join(map(str, t)) for t in thresholds])))
+        print("Number of features with thresholds computed: {}".format(len(all_thresholds)))
+        print("Thresholds:\n {}".format(";\n".join([", ".join(map(str, t)) for t in thresholds])))
+        print("Thresholds raw: {}".format(thresholds))
+
         return DiscretizerModel(thresholds)
     
     def train(self, cont_feat=None, max_bins=15):
@@ -163,22 +176,28 @@ class MDLPDiscretizer:
         * @return A discretization model with the thresholds by feature.
         """
 
+        start0 = time.time()
+
         if self.data.storageLevel == StorageLevel.NONE:
             print("The input data is not directly cached, which may hurt performance if its parent RDDs are also uncached.")
 
         if self.data.filter(self.data["label"].isNull()).count() > 0:
             raise ValueError("Some NaN values have been found in the label Column. This problem must be fixed before continuing with discretization.")
 
+        self.data.rdd.cache()
         sc = self.data.rdd.context
+        num_partitions_df = self.data.rdd.getNumPartitions()
+        print(f"Number of partitions in DataFrame: {num_partitions_df}")
 
         b_labels2int = sc.broadcast(self.labels2int)
         class_distrib = self.data.rdd.map(lambda x: b_labels2int.value[x.label]).countByValue()
         b_class_distrib = sc.broadcast(class_distrib)
-        print(type(b_labels2int))
+        b_n_labels = sc.broadcast(self.n_labels)
 
         n_features = len(self.data.first().features)
 
         continuous_vars = self.process_continuous_attributes(cont_feat, n_features)
+        print(f"Number of labels: {self.n_labels}")
         print("Number of continuous attributes:", len(continuous_vars))
         print("Total number of attributes:", n_features)
 
@@ -187,20 +206,17 @@ class MDLPDiscretizer:
 
         sc.broadcast(continuous_vars)
 
-        def map_to_feature_values(lp): 
-            label = lp.label    # Labeled Point
-            c = [0] * self.n_labels
-            c[b_labels2int.value(label)] = 1
-            if isinstance(lp.features, DenseVector):
-                return [((i, v), c) for i, v in enumerate(lp.features.toArray())]
-            elif isinstance(lp.features, SparseVector):
-                return [((i, v), c) for i, v in zip(lp.features.indices, lp.features.toArray())]
+        def map_to_feature_values(lp): # labeled point
+            c = [0] * b_n_labels.value
+            c[b_labels2int.value[lp.label]] = 1
+            vector = lp.features
+            if isinstance(vector, DenseVector):
+                return [((i, float(vector[i])), c) for i in range(len(vector))]
+            elif isinstance(vector, SparseVector):
+                return [((int(i), float(vector[int(i)])), c) for i in vector.indices]
 
         feature_values = self.data.rdd.flatMap(map_to_feature_values)
-
-        print(type(feature_values))        
-        feature_values.foreach(lambda x: print(x))
-        
+       
         sorted_values = self.get_sorted_distinct_values(b_class_distrib, feature_values)
 
         arr = [False] * n_features
@@ -210,7 +226,7 @@ class MDLPDiscretizer:
 
         # Get only boundary points from the whole set of distinct values
         start1 = time.time()
-        initial_candidates = (sorted_values 
+        initial_candidates = (self.initial_thresholds(sorted_values, n_features) 
             .map(lambda x: (x[0][0], (x[0][1], x[1]))) 
             .filter(lambda x: b_arr.value[x[0]]) )
             #.cache())
@@ -218,6 +234,8 @@ class MDLPDiscretizer:
 
         start2 = time.time()
         all_thresholds = self.find_all_thresholds(initial_candidates, sc, max_bins)
-        print("Done finding MDLP thresholds in", time.time() - start2, "Now returning model")
+        print("Done finding MDLP thresholds in", time.time() - start2)
+        print("Total running times", time.time() - start0)
+        print("Now returning model...")
 
         return self.build_model_from_thresholds(n_features, continuous_vars, all_thresholds)

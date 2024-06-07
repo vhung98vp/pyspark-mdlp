@@ -13,15 +13,17 @@ class ThresholdFinder:
         * @param right_freqs frequencies to the right
         * @return the MDLP criterion value, the weighted entropy value, sum of leftFreqs, and sum of rightFreqs
         """
-        
-        k1 = len([count for count in left_freqs if count != 0])
-        s1 = sum(left_freqs) if k1 > 0 else 0
-        hs1 = DiscretizationUtils.entropy(left_freqs, s1)
-        k2 = len([count for count in right_freqs if count != 0])
-        s2 = sum(right_freqs) if k2 > 0 else 0
-        hs2 = DiscretizationUtils.entropy(right_freqs, s2)
-        weighted_hs = (s1 * hs1 + s2 * hs2) / bucket_info.s
-        gain = bucket_info.hs - weighted_hs
+
+        print(f'Bucket: {bucket_info}')
+        print(f'freqs: {left_freqs} <<>> {right_freqs}')
+        k1 = len([count for count in left_freqs if count != 0])     # number of non-zero frequencies in left_freqs
+        s1 = sum(left_freqs) if k1 > 0 else 0                       # sum of frequencies in left_freqs
+        hs1 = DiscretizationUtils.entropy(left_freqs, s1)           # entropy of left_freqs
+        k2 = len([count for count in right_freqs if count != 0])    # number of non-zero frequencies in right_freqs
+        s2 = sum(right_freqs) if k2 > 0 else 0                      # sum of frequencies in right_freqs
+        hs2 = DiscretizationUtils.entropy(right_freqs, s2)          # entropy of right_freqs
+        weighted_hs = (s1 * hs1 + s2 * hs2) / bucket_info.s         # weighted entropy value
+        gain = bucket_info.hs - weighted_hs                         # information gain
         delta = DiscretizationUtils.log2(math.pow(3, bucket_info.k) - 2) - (bucket_info.k * bucket_info.hs - k1 * hs1 - k2 * hs2)
         criterion_value = gain - (DiscretizationUtils.log2(bucket_info.s - 1) + delta) / bucket_info.s
         return criterion_value, weighted_hs, s1, s2

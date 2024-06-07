@@ -32,13 +32,13 @@ class FewValuesThresholdFinder(ThresholdFinder):
 
         while stack and len(result) < self.max_bins:
             bounds, last_threshold = stack.popleft()
-            new_candidates = candidates.filter(lambda x: bounds[0] < x[0] < bounds[1])
+            new_candidates = list(filter(lambda x: bounds[0] < x[0] < bounds[1], candidates))
             if new_candidates:
                 thresholds = self.eval_thresholds(new_candidates, last_threshold, self.n_labels)
                 if thresholds:
-                    result.append(thresholds[0])
-                    stack.append(((bounds[0], thresholds[0]), thresholds[0]))
-                    stack.append(((thresholds[0], bounds[1]), thresholds[0]))
+                    result.append(thresholds)
+                    stack.append(((bounds[0], thresholds), thresholds))
+                    stack.append(((thresholds, bounds[1]), thresholds))
 
         return sorted(result) + [float("inf")]
 
@@ -52,7 +52,7 @@ class FewValuesThresholdFinder(ThresholdFinder):
         """
 
         # Compute the accumulated frequencies (both left and right) by label
-        totals = [sum(freqs) for _, freqs in candidates]
+        totals = [sum(freqs) for freqs in zip(*[freq for _, freq in candidates])]
 
         left_accum = [0] * n_labels
         entropy_freqs = []
@@ -64,13 +64,18 @@ class FewValuesThresholdFinder(ThresholdFinder):
 
         bucket_info = BucketInfo(totals)
 
-        final_candidates = []
-        for cand, _, left_freqs, right_freqs in entropy_freqs:
+        # Select the best threshold according to MDLP
+        def filter_candidates(cand_freqs):
+            cand, _, left_freqs, right_freqs = cand_freqs
             duplicate = cand == last_selected if last_selected is not None else False
             if not duplicate:
                 criterion_value, weighted_hs, left_sum, right_sum = self.calc_criterion_value(bucket_info, left_freqs, right_freqs)
                 criterion = criterion_value > self.stopping_criterion and left_sum > self.min_bin_weight and right_sum > self.min_bin_weight
                 if criterion:
-                    final_candidates.append((weighted_hs, cand))
-
+                    return (weighted_hs, cand)
+            return []
+        
+        final_candidates = list(filter(None, map(filter_candidates, entropy_freqs)))       
+        print(f"Final cands with few vals: {final_candidates}")
+        
         return min(final_candidates, key=lambda x: x[0])[1] if final_candidates else []

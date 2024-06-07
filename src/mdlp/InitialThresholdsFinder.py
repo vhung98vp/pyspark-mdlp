@@ -56,12 +56,13 @@ class InitialThresholdsFinder:
 
         def map_partitions_with_index(index, it):
             if it:
-                last_feature_idx, last_x, _ = next(it)[0]
+                (last_feature_idx, last_x, _), last_freqs = next(it)
                 result = []
                 accum_freqs = [0] * n_labels
                 
                 for (f_idx, x, _), freqs in it:
                     if self.is_boundary(freqs, last_freqs):
+                        # new boundary point: midpoint between this point and the previous one
                         result.append(((last_feature_idx, self.midpoint(x, last_x)), accum_freqs.copy()))
                         accum_freqs = [0] * n_labels
 
@@ -83,30 +84,33 @@ class InitialThresholdsFinder:
         * This version may generate some non-boundary points when processing limits in partitions.
         * This approximate solution may slightly affect the final set of cut_points, which will provoke some unit tests to fail. 
           It should not be relevant in large scenarios, where performance is more valuable.
-        * @param sortedValues RDD with distinct points by feature ((feature, point), class values).
+        * @param sorted_values RDD with distinct points by feature ((feature, point), class values).
         * @param n_labels number of class labels
         * @param max_by_part maximum number of values allowed in a partition
         * @return RDD of candidate points.
         """
         num_partitions = sorted_values.getNumPartitions()
         sc = sorted_values.context
+        print(f"Number of Partitions: {num_partitions}")
 
         # Get the first elements by partition for the boundary points evaluation
-        first_elements = sc.runJob(sorted_values, lambda it: next(it, None))
-
-        bc_firsts = sc.broadcast(first_elements)
+        first_elements = sc.runJob(sorted_values, lambda it: (next(it, [None])[0],))
+        print(first_elements)
+        b_first_elements = sc.broadcast(first_elements)
 
         def map_partitions_with_index(index, it):
             if it:
-                last_feature_idx, last_x = next(it)[0]
+                (last_feature_idx, last_x), last_freqs = next(it)
                 result = []
-                accum_freqs = [0] * n_labels
+                accum_freqs = last_freqs
 
                 for ((feature_idx, x), freqs) in it:
                     if feature_idx != last_feature_idx:
+                        # new attribute: add last point from the previous one
                         result.append(((last_feature_idx, last_x), accum_freqs.copy()))
                         accum_freqs = [0] * n_labels
                     elif self.is_boundary(freqs, last_freqs):
+                        # new boundary point: midpoint between this point and the previous one
                         result.append(((last_feature_idx, (x + last_x) / 2), accum_freqs.copy()))
                         accum_freqs = [0] * n_labels
 
@@ -115,7 +119,15 @@ class InitialThresholdsFinder:
                     last_freqs = freqs
                     accum_freqs = [accum_freq + freq for accum_freq, freq in zip(accum_freqs, freqs)]
 
-                last_point = last_x if index == (num_partitions - 1) else bc_firsts.value[index + 1][0][1]
+                if index < (num_partitions - 1):
+                    next_first = b_first_elements.value[index + 1]
+                    if next_first:
+                        next_feature_idx, next_x = next_first
+                        last_point = last_x if next_feature_idx != last_feature_idx else (next_x + last_x) / 2
+                    else:
+                        last_point = last_x  # Last point in the attribute
+                else:
+                    last_point = last_x  # Last point in the dataset
                 result.append(((last_feature_idx, last_point), accum_freqs.copy()))
                 return result[::-1]  # Reverse the list and return as an iterator
             else:
