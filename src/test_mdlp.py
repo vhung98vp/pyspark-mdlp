@@ -7,13 +7,13 @@ from mdlp.MDLPDiscretizer import MDLPDiscretizer
 
 spark = SparkSession.builder.appName("TestMdlp").getOrCreate()
 
-data = np.random.rand(100, 5) * 1000
+data = np.random.rand(100, 4) * 1000
 
-schema = ["Class", "V1", "V2", "V3", "V4"]
+schema = ["Class", "V1", "V2", "V3"]
 
 # Create DataFrame
 df = spark.createDataFrame(data, schema)
-assembler = VectorAssembler(inputCols=["V1", "V2", "V3", "V4"], outputCol="features")
+assembler = VectorAssembler(inputCols=["V1", "V2", "V3"], outputCol="features")
 df = assembler.transform(df)
 df = df.select(df.Class.alias("label"), "features")
 df.show()

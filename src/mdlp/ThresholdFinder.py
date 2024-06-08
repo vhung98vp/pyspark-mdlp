@@ -13,9 +13,6 @@ class ThresholdFinder:
         * @param right_freqs frequencies to the right
         * @return the MDLP criterion value, the weighted entropy value, sum of leftFreqs, and sum of rightFreqs
         """
-
-        print(f'Bucket: {bucket_info}')
-        print(f'freqs: {left_freqs} <<>> {right_freqs}')
         
         k1 = len([count for count in left_freqs if count != 0])     # number of non-zero frequencies in left_freqs
         s1 = sum(left_freqs) if k1 > 0 else 0                       # sum of frequencies in left_freqs

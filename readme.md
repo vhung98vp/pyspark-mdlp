@@ -1,0 +1,1 @@
+This project - A Distributed Data Discretizer using MDLP algorithm using PySpark

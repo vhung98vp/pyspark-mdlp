@@ -1,7 +1,8 @@
 from pyspark.sql import SparkSession
-from pyspark.sql.functions import udf
+from pyspark.sql.functions import udf, col
 from pyspark.ml.linalg import VectorUDT
 from pyspark.ml.feature import VectorAssembler
+from pyspark.ml.functions import vector_to_array
 from mdlp.MDLPDiscretizer import MDLPDiscretizer
 
 
@@ -64,4 +65,14 @@ def MDLPBuilder(app_name, csv_path, label_col):
     # Show the transformed DataFrame
     df.show(20) 
 
-    return discretizer_model
+    # Split df to cols to test
+    df_array = df.withColumn("features_array", vector_to_array(col("discretized_features")))
+    df_final = df_array.drop("features", "discretized_features")
+    num_features = len(df_array.select("features_array").first()[0])
+
+    for i in range(num_features):
+        df_array = df_array.withColumn(f"feature_{i}", col("features_array")[i])
+
+    df_final = df_array.drop("features_array")
+
+    return df_final

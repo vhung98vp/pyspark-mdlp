@@ -4,7 +4,6 @@ from pyspark.sql.functions import col
 from pyspark.ml.linalg import DenseVector, SparseVector
 from pyspark import StorageLevel, RDD, SparkContext
 from typing import List, Tuple, Dict
-from math import isnan
 from .InitialThresholdsFinder import InitialThresholdsFinder
 from .ManyValuesThresholdFinder import ManyValuesThresholdFinder
 from .FewValuesThresholdFinder import FewValuesThresholdFinder
@@ -189,7 +188,6 @@ class MDLPDiscretizer:
         if self.data.filter(col("label").isNull()).count() > 0:
             raise ValueError("Some NaN values have been found in the label Column. This problem must be fixed before continuing with discretization.")
 
-        self.data.rdd.cache()
         sc = self.data.rdd.context
         num_partitions_df = self.data.rdd.getNumPartitions()
         print(f"Number of partitions in DataFrame: {num_partitions_df}")

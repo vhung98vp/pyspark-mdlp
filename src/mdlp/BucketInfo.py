@@ -3,6 +3,9 @@ from .DiscretizationUtils import DiscretizationUtils
 
 class BucketInfo:
     def __init__(self, totals: List[int]):
+        """
+        @param totals frequency totals for unique values in the bucket
+        """
         self.totals = totals
 
     @property
