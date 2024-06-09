@@ -12,8 +12,6 @@ def MDLPBuilder(app_name, csv_path, label_col):
     * @param app_name Spark session
     * @param csv_path Path to csv file
     * @param label_col label (target) column
-    * @param max_by_part max number of elements in a partition
-    * @param min_bin_percentage minimum percent of total dataset allowed in a single bin.
     """
 
     # Initialize Spark session
